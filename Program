@@ -1,1 +1,147 @@
+#include <reg52.h>
+#include <stdio.h>
+#include <intrins.h>
 
+/* LCD connections */
+#define LCD_Data P1
+sbit RS = P2^0;
+sbit RW = P2^1;
+sbit EN = P2^2;
+
+/* Ultrasonic pins */
+sbit Trigger_pin = P2^6;
+sbit Echo_pin    = P2^7;
+
+/* Function declarations */
+void delay(unsigned int);
+void LCD_Command(char);
+void LCD_Char(char);
+void LCD_String(char *);
+void LCD_String_xy(unsigned char, unsigned char, char *);
+void LCD_Init(void);
+void timer0_init(void);
+void send_trigger_pulse(void);
+
+/* Delay function */
+void delay(unsigned int k)
+{
+    unsigned int i, j;
+    for(i = 0; i < k; i++)
+        for(j = 0; j < 120; j++);
+}
+
+/* LCD functions */
+void LCD_Command(char cmd)
+{
+    LCD_Data = cmd;
+    RS = 0;
+    RW = 0;
+    EN = 1;
+    delay(1);
+    EN = 0;
+}
+
+void LCD_Char(char dat)
+{
+    LCD_Data = dat;
+    RS = 1;
+    RW = 0;
+    EN = 1;
+    delay(1);
+    EN = 0;
+}
+
+void LCD_String(char *str)
+{
+    while(*str)
+        LCD_Char(*str++);
+}
+
+void LCD_String_xy(unsigned char row, unsigned char pos, char *str)
+{
+    if(row == 1)
+        LCD_Command(0x80 + pos);
+    else if(row == 2)
+        LCD_Command(0xC0 + pos);
+
+    LCD_String(str);
+}
+
+void LCD_Init()
+{
+    delay(50);
+    LCD_Command(0x38); // 8-bit, 2 line
+    LCD_Command(0x0C); // display ON
+    LCD_Command(0x01); // clear display
+    LCD_Command(0x06); // entry mode
+}
+
+/* Timer0 init */
+void timer0_init()
+{
+    TMOD = 0x01; // Timer0 mode1 (16-bit)
+    TR0 = 0;
+    TF0 = 0;
+}
+
+/* Trigger pulse (~10us) */
+void send_trigger_pulse()
+{
+    Trigger_pin = 1;
+    _nop_(); _nop_(); _nop_(); _nop_(); _nop_();
+    _nop_(); _nop_(); _nop_(); _nop_(); _nop_();
+    Trigger_pin = 0;
+}
+
+/* MAIN */
+void main()
+{
+    unsigned int count;
+    unsigned int distance;
+    unsigned int timeout;
+    char buffer[16];
+
+    LCD_Init();
+    timer0_init();
+
+    LCD_String_xy(1, 0, "Distance:");
+
+    while(1)
+    {
+        send_trigger_pulse();
+
+        /* Wait for Echo HIGH */
+        timeout = 0;
+        while(!Echo_pin && timeout < 60000)
+            timeout++;
+
+        if(timeout >= 60000)
+        {
+            LCD_String_xy(2, 0, "No Signal   ");
+            continue;
+        }
+
+        /* Start timer */
+        TL0 = 0;
+        TH0 = 0;
+        TF0 = 0;
+        TR0 = 1;
+
+        /* Wait for Echo LOW */
+        while(Echo_pin && !TF0);
+
+        TR0 = 0;
+
+        /* Read timer */
+        count = (TH0 << 8) | TL0;
+
+        /* Convert to distance (cm) */
+        distance = count / 58;
+
+        /* Display */
+        sprintf(buffer, "%u cm   ", distance);
+        LCD_String_xy(2, 0, buffer);
+
+        delay(100);
+    }
+}
